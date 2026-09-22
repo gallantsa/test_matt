@@ -21,9 +21,10 @@
 - 消息协议：JSON 分 type（`chat` / `join` / `leave`）。见 `docs/adr/002-protocol.md`。
 - 昵称：允许重名；空昵称分配 `guest-<随机>`。
 - 历史：内存保留最近 100 条，新连接推送。
-- repo：决定现在初始化（待执行）。
+- UI：昵称框 + 消息列表 + 输入框，手写 CSS、自动滚底、断线状态条；断线手动刷新重连。见 `docs/adr/003-ui-layout.md`。
+- 布局：单包 `server/` + `public/`，`npm run dev` 一键启动。
+- repo：已初始化，remote 为 `git@github.com:gallantsa/test_matt.git`。
 
 ## Open questions
 
-- UI 形态与底线（单页、样式、断线重连表现）。
-- 工程布局（单包结构、启动命令、测试底线）。
+无。本轮 grilling 收束，可进入 `/to-spec`。

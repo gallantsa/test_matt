@@ -30,7 +30,7 @@ export function clearHistoryForTest(): void {
 
 function broadcast(msg: ChatMessage): void {
   history.push(msg);
-  if (history.length > 100) history.splice(0, history.length - 100);
+  if (history.length > 101) history.splice(0, history.length - 100);
   const payload = JSON.stringify(msg);
   for (const ws of clients) {
     if (ws.readyState === ws.OPEN) ws.send(payload);

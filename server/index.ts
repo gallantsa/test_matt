@@ -1,123 +1,55 @@
 import { createServer, type Server } from "node:http";
 import { readFile } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join, extname, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
+import {
+  RoomStore,
+  sanitizeRoomName,
+  assignNickname,
+  DEFAULT_ROOM,
+  type ChatMessage,
+} from "./room.ts";
 
-export type ChatMessage = {
-  type: "chat" | "join" | "leave";
-  nickname: string;
-  text: string;
-  at: number;
-};
-
-export const DEFAULT_ROOM = "lobby";
-
-export type RoomState = {
-  name: string;
-  history: ChatMessage[];
-  clients: Set<WebSocket>;
-};
-
-const rooms = new Map<string, RoomState>();
+export type { ChatMessage };
+export { DEFAULT_ROOM, sanitizeRoomName, assignNickname };
 
 const projectRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
-export function getDataDir(): string {
+function currentDataDir(): string {
   return process.env.DATA_DIR ?? join(projectRoot, "data");
 }
 
-function roomFilePath(name: string): string {
-  return join(getDataDir(), `${name}.json`);
-}
+const stores = new Map<string, RoomStore>();
 
-function loadPersistedChat(name: string): ChatMessage[] {
-  try {
-    const file = roomFilePath(name);
-    if (!existsSync(file)) return [];
-    const parsed = JSON.parse(readFileSync(file, "utf-8"));
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((m) => m?.type === "chat" && typeof m?.nickname === "string" && typeof m?.text === "string")
-      .slice(-100);
-  } catch {
-    return [];
+function storeFor(dir?: string): RoomStore {
+  const key = dir ?? currentDataDir();
+  let store = stores.get(key);
+  if (!store) {
+    store = new RoomStore(key);
+    stores.set(key, store);
   }
-}
-
-function saveRoomHistory(room: RoomState): void {
-  try {
-    mkdirSync(getDataDir(), { recursive: true });
-    const chats = room.history.filter((m) => m.type === "chat").slice(-100);
-    writeFileSync(roomFilePath(room.name), JSON.stringify(chats, null, 2));
-  } catch {
-    // persistence is best-effort; chat still works in memory
-  }
-}
-
-export function getOrCreateRoom(name: string = DEFAULT_ROOM): RoomState {
-  let room = rooms.get(name);
-  if (!room) {
-    room = { name, history: loadPersistedChat(name), clients: new Set() };
-    rooms.set(name, room);
-  }
-  return room;
-}
-
-export function getRoom(name: string = DEFAULT_ROOM): RoomState {
-  return getOrCreateRoom(name);
-}
-
-export function clearAllRoomsForTest(): void {
-  rooms.clear();
-}
-
-export function sanitizeRoomName(raw: unknown): string {
-  const name = typeof raw === "string" ? raw.trim() : "";
-  if (!name) return DEFAULT_ROOM;
-  if (!/^[A-Za-z0-9_-]{1,32}$/.test(name)) return DEFAULT_ROOM;
-  return name;
-}
-export function assignNickname(raw: unknown): string {
-  const name = typeof raw === "string" ? raw.trim() : "";
-  if (name) return name;
-  return `guest-${Math.random().toString(16).slice(2, 6).padEnd(4, "0")}`;
+  return store;
 }
 
 export function getHistory(roomName: string = DEFAULT_ROOM): ChatMessage[] {
-  return [...getOrCreateRoom(roomName).history];
+  return storeFor().history(roomName);
+}
+
+export function clearAllRoomsForTest(): void {
+  for (const store of stores.values()) store.clearAll();
 }
 
 export function clearHistoryForTest(roomName?: string): void {
   if (roomName === undefined) {
-    for (const room of rooms.values()) {
-      room.history.length = 0;
-      try {
-        rmSync(roomFilePath(room.name), { force: true });
-      } catch {
-        // ignore
-      }
-    }
+    for (const store of stores.values()) store.clearAllHistory();
     return;
   }
-  getOrCreateRoom(roomName).history.length = 0;
-  try {
-    rmSync(roomFilePath(roomName), { force: true });
-  } catch {
-    // ignore
-  }
+  storeFor().clearRoom(roomName);
 }
 
-function broadcast(msg: ChatMessage, roomName: string = DEFAULT_ROOM): void {
-  const room = getOrCreateRoom(roomName);
-  room.history.push(msg);
-  if (room.history.length > 100) room.history.splice(0, room.history.length - 100);
-  if (msg.type === "chat") saveRoomHistory(room);
-  const payload = JSON.stringify(msg);
-  for (const ws of room.clients) {
-    if (ws.readyState === ws.OPEN) ws.send(payload);
-  }
+function send(ws: WebSocket, payload: unknown): void {
+  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
 }
 
 const MIME: Record<string, string> = {
@@ -129,6 +61,7 @@ const MIME: Record<string, string> = {
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "public");
 
 export async function startServer(port = 3000): Promise<{ url: string; close: () => Promise<void> }> {
+  const store = storeFor();
   const httpServer: Server = createServer(async (req, res) => {
     const pathname = normalize(new URL(req.url ?? "/", "http://x").pathname);
     const filePath = join(root, pathname === "/" ? "index.html" : pathname.slice(1));
@@ -156,9 +89,7 @@ export async function startServer(port = 3000): Promise<{ url: string; close: ()
     } catch {
       // keep default
     }
-    let room = getOrCreateRoom(roomName);
-    room.clients.add(ws);
-    ws.send(JSON.stringify({ type: "history", room: roomName, messages: getHistory(roomName) }));
+    send(ws, { type: "history", room: roomName, messages: store.join(roomName, ws) });
     let nickname: string | null = null;
     ws.on("message", (raw) => {
       try {
@@ -166,44 +97,39 @@ export async function startServer(port = 3000): Promise<{ url: string; close: ()
         if (data?.type === "join" && nickname === null) {
           const requested = sanitizeRoomName(data.room ?? roomName);
           if (requested !== roomName) {
-            room.clients.delete(ws);
+            const previous = roomName;
             roomName = requested;
-            room = getOrCreateRoom(roomName);
-            room.clients.add(ws);
-            ws.send(JSON.stringify({ type: "history", room: roomName, messages: getHistory(roomName) }));
+            send(ws, { type: "history", room: roomName, messages: store.moveClient(previous, roomName, ws) });
           }
           nickname = assignNickname(data.nickname);
-          ws.send(JSON.stringify({ type: "joined", nickname, room: roomName }));
-          broadcast(
-            {
-              type: "join",
-              nickname,
-              text: `${nickname} 加入了 #${roomName}`,
-              at: Date.now(),
-            },
-            roomName,
-          );
+          send(ws, { type: "joined", nickname, room: roomName });
+          const { message, targets } = store.say(roomName, {
+            type: "join",
+            nickname,
+            text: `${nickname} 加入了 #${roomName}`,
+            at: Date.now(),
+          });
+          for (const target of targets) send(target, message);
         } else if (data?.type === "chat" && nickname !== null) {
           const text = typeof data.text === "string" ? data.text.trim() : "";
           if (!text) return;
-          broadcast({ type: "chat", nickname, text, at: Date.now() }, roomName);
+          const { message, targets } = store.say(roomName, { type: "chat", nickname, text, at: Date.now() });
+          for (const target of targets) send(target, message);
         }
       } catch {
         // ignore malformed payloads
       }
     });
     ws.on("close", () => {
-      room.clients.delete(ws);
+      store.leave(roomName, ws);
       if (nickname !== null) {
-        broadcast(
-          {
-            type: "leave",
-            nickname,
-            text: `${nickname} 离开了 #${roomName}`,
-            at: Date.now(),
-          },
-          roomName,
-        );
+        const { message, targets } = store.say(roomName, {
+          type: "leave",
+          nickname,
+          text: `${nickname} 离开了 #${roomName}`,
+          at: Date.now(),
+        });
+        for (const target of targets) send(target, message);
       }
     });
   });
@@ -216,16 +142,7 @@ export async function startServer(port = 3000): Promise<{ url: string; close: ()
     url,
     close: () =>
       new Promise<void>((resolve, reject) => {
-        for (const r of rooms.values()) {
-          for (const ws of r.clients) {
-            try {
-              ws.terminate();
-            } catch {
-              // ignore
-            }
-          }
-          r.clients.clear();
-        }
+        store.terminateAll();
         wss.close(() => httpServer.close((err) => (err ? reject(err) : resolve())));
       }),
   };

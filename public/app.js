@@ -1,6 +1,24 @@
 const list = document.getElementById("messages");
 const statusEl = document.getElementById("status");
 const nicknameInput = document.getElementById("nickname");
+const roomInput = document.getElementById("room");
+
+function currentRoom() {
+  const fromUrl = new URLSearchParams(location.search).get("room");
+  const raw = (roomInput && roomInput.value.trim()) || fromUrl || "lobby";
+  return raw.trim() || "lobby";
+}
+
+if (roomInput) {
+  const fromUrl = new URLSearchParams(location.search).get("room");
+  if (fromUrl) roomInput.value = fromUrl;
+  roomInput.addEventListener("change", () => {
+    const r = roomInput.value.trim() || "lobby";
+    const url = new URL(location.href);
+    url.searchParams.set("room", r);
+    location.href = url.toString();
+  });
+}
 const inputEl = document.getElementById("input");
 const sendBtn = document.getElementById("send");
 
@@ -49,7 +67,8 @@ function addHistory(messages) {
 }
 
 const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-const ws = new WebSocket(`${protocol}//${location.host}`);
+const wsRoom = new URLSearchParams(location.search).get("room") || currentRoom();
+const ws = new WebSocket(`${protocol}//${location.host}?room=${encodeURIComponent(wsRoom)}`);
 
 if (statusEl) {
   ws.addEventListener("close", () => statusEl.classList.add("offline"));
@@ -82,7 +101,7 @@ ws.addEventListener("message", (event) => {
 function tryJoin() {
   if (joined || ws.readyState !== WebSocket.OPEN) return;
   const raw = nicknameInput ? nicknameInput.value : "";
-  ws.send(JSON.stringify({ type: "join", nickname: (raw ?? "").trim() }));
+  ws.send(JSON.stringify({ type: "join", nickname: (raw ?? "").trim(), room: currentRoom() }));
 }
 
 function sendChat() {

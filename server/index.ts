@@ -38,6 +38,12 @@ export function clearAllRoomsForTest(): void {
   rooms.clear();
 }
 
+export function sanitizeRoomName(raw: unknown): string {
+  const name = typeof raw === "string" ? raw.trim() : "";
+  if (!name) return DEFAULT_ROOM;
+  if (!/^[A-Za-z0-9_-]{1,32}$/.test(name)) return DEFAULT_ROOM;
+  return name;
+}
 export function assignNickname(raw: unknown): string {
   const name = typeof raw === "string" ? raw.trim() : "";
   if (name) return name;
@@ -94,27 +100,45 @@ export async function startServer(port = 3000): Promise<{ url: string; close: ()
   await new Promise<void>((resolve) => httpServer.listen(port, resolve));
   const wss = new WebSocketServer({ server: httpServer });
 
-  wss.on("connection", (ws: WebSocket) => {
-    const room = getOrCreateRoom(DEFAULT_ROOM);
+  wss.on("connection", (ws: WebSocket, req) => {
+    let roomName = DEFAULT_ROOM;
+    try {
+      const q = new URL(req?.url ?? "/", "http://x").searchParams.get("room");
+      if (q) roomName = sanitizeRoomName(q);
+    } catch {
+      // keep default
+    }
+    let room = getOrCreateRoom(roomName);
     room.clients.add(ws);
-    ws.send(JSON.stringify({ type: "history", messages: getHistory() }));
+    ws.send(JSON.stringify({ type: "history", room: roomName, messages: getHistory(roomName) }));
     let nickname: string | null = null;
     ws.on("message", (raw) => {
       try {
         const data = JSON.parse(String(raw));
         if (data?.type === "join" && nickname === null) {
+          const requested = sanitizeRoomName(data.room ?? roomName);
+          if (requested !== roomName) {
+            room.clients.delete(ws);
+            roomName = requested;
+            room = getOrCreateRoom(roomName);
+            room.clients.add(ws);
+            ws.send(JSON.stringify({ type: "history", room: roomName, messages: getHistory(roomName) }));
+          }
           nickname = assignNickname(data.nickname);
-          ws.send(JSON.stringify({ type: "joined", nickname }));
-          broadcast({
-            type: "join",
-            nickname,
-            text: `${nickname} 加入了聊天室`,
-            at: Date.now(),
-          });
+          ws.send(JSON.stringify({ type: "joined", nickname, room: roomName }));
+          broadcast(
+            {
+              type: "join",
+              nickname,
+              text: `${nickname} 加入了 #${roomName}`,
+              at: Date.now(),
+            },
+            roomName,
+          );
         } else if (data?.type === "chat" && nickname !== null) {
           const text = typeof data.text === "string" ? data.text.trim() : "";
           if (!text) return;
-          broadcast({ type: "chat", nickname, text, at: Date.now() });
+          broadcast({ type: "chat", nickname, text, at: Date.now() }, roomName);
         }
       } catch {
         // ignore malformed payloads
@@ -123,12 +147,15 @@ export async function startServer(port = 3000): Promise<{ url: string; close: ()
     ws.on("close", () => {
       room.clients.delete(ws);
       if (nickname !== null) {
-        broadcast({
-          type: "leave",
-          nickname,
-          text: `${nickname} 离开了聊天室`,
-          at: Date.now(),
-        });
+        broadcast(
+          {
+            type: "leave",
+            nickname,
+            text: `${nickname} 离开了 #${roomName}`,
+            at: Date.now(),
+          },
+          roomName,
+        );
       }
     });
   });

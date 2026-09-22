@@ -11,8 +11,32 @@ export type ChatMessage = {
   at: number;
 };
 
-const history: ChatMessage[] = [];
-const clients = new Set<WebSocket>();
+export const DEFAULT_ROOM = "lobby";
+
+export type RoomState = {
+  name: string;
+  history: ChatMessage[];
+  clients: Set<WebSocket>;
+};
+
+const rooms = new Map<string, RoomState>();
+
+export function getOrCreateRoom(name: string = DEFAULT_ROOM): RoomState {
+  let room = rooms.get(name);
+  if (!room) {
+    room = { name, history: [], clients: new Set() };
+    rooms.set(name, room);
+  }
+  return room;
+}
+
+export function getRoom(name: string = DEFAULT_ROOM): RoomState {
+  return getOrCreateRoom(name);
+}
+
+export function clearAllRoomsForTest(): void {
+  rooms.clear();
+}
 
 export function assignNickname(raw: unknown): string {
   const name = typeof raw === "string" ? raw.trim() : "";
@@ -20,19 +44,24 @@ export function assignNickname(raw: unknown): string {
   return `guest-${Math.random().toString(16).slice(2, 6).padEnd(4, "0")}`;
 }
 
-export function getHistory(): ChatMessage[] {
-  return [...history];
+export function getHistory(roomName: string = DEFAULT_ROOM): ChatMessage[] {
+  return [...getOrCreateRoom(roomName).history];
 }
 
-export function clearHistoryForTest(): void {
-  history.length = 0;
+export function clearHistoryForTest(roomName?: string): void {
+  if (roomName === undefined) {
+    for (const room of rooms.values()) room.history.length = 0;
+    return;
+  }
+  getOrCreateRoom(roomName).history.length = 0;
 }
 
-function broadcast(msg: ChatMessage): void {
-  history.push(msg);
-  if (history.length > 100) history.splice(0, history.length - 100);
+function broadcast(msg: ChatMessage, roomName: string = DEFAULT_ROOM): void {
+  const room = getOrCreateRoom(roomName);
+  room.history.push(msg);
+  if (room.history.length > 100) room.history.splice(0, room.history.length - 100);
   const payload = JSON.stringify(msg);
-  for (const ws of clients) {
+  for (const ws of room.clients) {
     if (ws.readyState === ws.OPEN) ws.send(payload);
   }
 }
@@ -66,7 +95,8 @@ export async function startServer(port = 3000): Promise<{ url: string; close: ()
   const wss = new WebSocketServer({ server: httpServer });
 
   wss.on("connection", (ws: WebSocket) => {
-    clients.add(ws);
+    const room = getOrCreateRoom(DEFAULT_ROOM);
+    room.clients.add(ws);
     ws.send(JSON.stringify({ type: "history", messages: getHistory() }));
     let nickname: string | null = null;
     ws.on("message", (raw) => {
@@ -91,7 +121,7 @@ export async function startServer(port = 3000): Promise<{ url: string; close: ()
       }
     });
     ws.on("close", () => {
-      clients.delete(ws);
+      room.clients.delete(ws);
       if (nickname !== null) {
         broadcast({
           type: "leave",
@@ -111,14 +141,16 @@ export async function startServer(port = 3000): Promise<{ url: string; close: ()
     url,
     close: () =>
       new Promise<void>((resolve, reject) => {
-        for (const ws of clients) {
-          try {
-            ws.terminate();
-          } catch {
-            // ignore
+        for (const r of rooms.values()) {
+          for (const ws of r.clients) {
+            try {
+              ws.terminate();
+            } catch {
+              // ignore
+            }
           }
+          r.clients.clear();
         }
-        clients.clear();
         wss.close(() => httpServer.close((err) => (err ? reject(err) : resolve())));
       }),
   };

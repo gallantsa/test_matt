@@ -2,44 +2,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import WebSocket from "ws";
 import { startServer, clearHistoryForTest } from "../server/index.ts";
-
-function wsUrl(httpUrl: string) {
-  return httpUrl.replace(/^http/, "ws");
-}
-
-function waitFor(ws: WebSocket, predicate: (d: any) => boolean, timeoutMs = 3000): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      ws.removeListener("message", onMessage);
-      reject(new Error("timed out waiting for message"));
-    }, timeoutMs);
-    function onMessage(raw: any) {
-      try {
-        const data = JSON.parse(String(raw));
-        if (predicate(data)) {
-          clearTimeout(timer);
-          ws.removeListener("message", onMessage);
-          resolve(data);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    ws.on("message", onMessage);
-  });
-}
-
-function openJoined(url: string, nickname: string): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    ws.once("open", () => {
-      const joinedP = waitFor(ws, (d) => d.type === "joined");
-      ws.send(JSON.stringify({ type: "join", nickname }));
-      joinedP.then(() => resolve(ws), reject);
-    });
-    ws.once("error", reject);
-  });
-}
+import { wsUrl, waitFor, openJoined } from "./helpers.ts";
 
 describe("T5: chat broadcast boundary", () => {
   let baseUrl = "";

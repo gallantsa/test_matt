@@ -2,32 +2,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import WebSocket from "ws";
 import { startServer, clearHistoryForTest } from "../server/index.ts";
-
-function wsUrl(httpUrl) {
-  return httpUrl.replace(/^http/, "ws");
-}
-
-function waitFor(ws, predicate, timeoutMs = 3000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      ws.removeListener("message", onMessage);
-      reject(new Error("timed out waiting for message"));
-    }, timeoutMs);
-    function onMessage(raw) {
-      try {
-        const data = JSON.parse(String(raw));
-        if (predicate(data)) {
-          clearTimeout(timer);
-          ws.removeListener("message", onMessage);
-          resolve(data);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    ws.on("message", onMessage);
-  });
-}
+import { wsUrl, waitFor } from "./helpers.ts";
 
 describe("T2: join with nickname (WebSocket boundary)", () => {
   let baseUrl = "";

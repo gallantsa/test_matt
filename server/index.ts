@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
   RoomStore,
+  JsonFileStore,
   sanitizeRoomName,
   assignNickname,
   DEFAULT_ROOM,
@@ -26,7 +27,7 @@ function storeFor(dir?: string): RoomStore {
   const key = dir ?? currentDataDir();
   let store = stores.get(key);
   if (!store) {
-    store = new RoomStore(key);
+    store = new RoomStore(new JsonFileStore(key));
     stores.set(key, store);
   }
   return store;

@@ -2,39 +2,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import WebSocket from "ws";
 import { startServer, clearHistoryForTest, getHistory } from "../server/index.ts";
-
-function wsUrl(httpUrl: string) {
-  return httpUrl.replace(/^http/, "ws");
-}
-
-function waitFor(ws: WebSocket, predicate: (d: any) => boolean, timeoutMs = 3000): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      ws.removeListener("message", onMessage);
-      reject(new Error("timed out waiting for message"));
-    }, timeoutMs);
-    function onMessage(raw: any) {
-      try {
-        const data = JSON.parse(String(raw));
-        if (predicate(data)) {
-          clearTimeout(timer);
-          ws.removeListener("message", onMessage);
-          resolve(data);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    ws.on("message", onMessage);
-  });
-}
-
-function openSocket(url: string): Promise<WebSocket> {
-  return new Promise((resolve) => {
-    const ws = new WebSocket(url);
-    ws.once("open", () => resolve(ws));
-  });
-}
+import { wsUrl, waitFor, openSocket } from "./helpers.ts";
 
 describe("T4: history replay + leave", () => {
   let baseUrl = "";

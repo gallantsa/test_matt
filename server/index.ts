@@ -92,6 +92,14 @@ export async function startServer(port = 3000): Promise<{ url: string; close: ()
     });
     ws.on("close", () => {
       clients.delete(ws);
+      if (nickname !== null) {
+        broadcast({
+          type: "leave",
+          nickname,
+          text: `${nickname} 离开了聊天室`,
+          at: Date.now(),
+        });
+      }
     });
   });
 
@@ -102,9 +110,17 @@ export async function startServer(port = 3000): Promise<{ url: string; close: ()
   return {
     url,
     close: () =>
-      new Promise<void>((resolve, reject) =>
-        wss.close(() => httpServer.close((err) => (err ? reject(err) : resolve()))),
-      ),
+      new Promise<void>((resolve, reject) => {
+        for (const ws of clients) {
+          try {
+            ws.terminate();
+          } catch {
+            // ignore
+          }
+        }
+        clients.clear();
+        wss.close(() => httpServer.close((err) => (err ? reject(err) : resolve())));
+      }),
   };
 }
 

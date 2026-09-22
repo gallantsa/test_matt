@@ -1,0 +1,14 @@
+{
+  "name": "minimal-chat-room",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server/index.ts",
+    "start": "node server/index.ts",
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

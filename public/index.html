@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>极简聊天室</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f5f5f5; }
+  #app { max-width: 640px; margin: 0 auto; padding: 16px; }
+  #status { display: none; background: #fee; color: #a00; padding: 8px; margin-bottom: 8px; }
+  #status.offline { display: block; }
+  #messages { list-style: none; padding: 0; height: 60vh; overflow-y: auto; background: #fff; border: 1px solid #ddd; }
+  #messages li { padding: 6px 10px; }
+  #messages li.system { color: #888; }
+  #bar { display: flex; gap: 8px; margin-top: 8px; }
+  #nickname { width: 120px; }
+  #input { flex: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>极简聊天室</h1>
+  <div id="status">已断开，请手动刷新重连</div>
+  <ul id="messages"></ul>
+  <div id="bar">
+    <input id="nickname" placeholder="昵称" />
+    <input id="input" placeholder="输入消息，回车发送" />
+    <button id="send">发送</button>
+  </div>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -24,9 +24,27 @@ function addSystemMessage(text) {
   scrollBottom();
 }
 
+function addChatMessage(nickname, text, at) {
+  if (!list) return;
+  const li = document.createElement("li");
+  const name = document.createElement("b");
+  name.textContent = `${nickname} `;
+  const time = document.createElement("span");
+  time.className = "time";
+  time.textContent = at ? new Date(at).toLocaleTimeString() : "";
+  const body = document.createElement("span");
+  body.textContent = ` ${text}`;
+  li.appendChild(name);
+  li.appendChild(time);
+  li.appendChild(body);
+  list.appendChild(li);
+  scrollBottom();
+}
+
 function addHistory(messages) {
   for (const m of messages ?? []) {
     if (m.type === "join" || m.type === "leave") addSystemMessage(m.text);
+    else if (m.type === "chat") addChatMessage(m.nickname, m.text, m.at);
   }
 }
 
@@ -56,6 +74,8 @@ ws.addEventListener("message", (event) => {
     }
   } else if (data.type === "join" || data.type === "leave") {
     addSystemMessage(data.text);
+  } else if (data.type === "chat") {
+    addChatMessage(data.nickname, data.text, data.at);
   }
 });
 
@@ -65,14 +85,30 @@ function tryJoin() {
   ws.send(JSON.stringify({ type: "join", nickname: (raw ?? "").trim() }));
 }
 
+function sendChat() {
+  if (!joined || ws.readyState !== WebSocket.OPEN) return;
+  const text = inputEl ? inputEl.value.trim() : "";
+  if (!text) return;
+  ws.send(JSON.stringify({ type: "chat", text }));
+  if (inputEl) inputEl.value = "";
+}
+
 ws.addEventListener("open", tryJoin);
 if (nicknameInput) {
   nicknameInput.addEventListener("change", tryJoin);
 }
-if (sendBtn) sendBtn.addEventListener("click", tryJoin);
+if (sendBtn) {
+  sendBtn.addEventListener("click", () => {
+    if (!joined) tryJoin();
+    else sendChat();
+  });
+}
 if (inputEl) {
   inputEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") tryJoin();
+    if (e.key === "Enter") {
+      if (!joined) tryJoin();
+      else sendChat();
+    }
   });
 }
 

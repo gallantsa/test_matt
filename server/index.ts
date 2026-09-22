@@ -81,6 +81,10 @@ export async function startServer(port = 3000): Promise<{ url: string; close: ()
             text: `${nickname} 加入了聊天室`,
             at: Date.now(),
           });
+        } else if (data?.type === "chat" && nickname !== null) {
+          const text = typeof data.text === "string" ? data.text.trim() : "";
+          if (!text) return;
+          broadcast({ type: "chat", nickname, text, at: Date.now() });
         }
       } catch {
         // ignore malformed payloads

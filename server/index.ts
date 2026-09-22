@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { readFile } from "node:fs/promises";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join, extname, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
@@ -21,10 +22,44 @@ export type RoomState = {
 
 const rooms = new Map<string, RoomState>();
 
+const projectRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
+
+export function getDataDir(): string {
+  return process.env.DATA_DIR ?? join(projectRoot, "data");
+}
+
+function roomFilePath(name: string): string {
+  return join(getDataDir(), `${name}.json`);
+}
+
+function loadPersistedChat(name: string): ChatMessage[] {
+  try {
+    const file = roomFilePath(name);
+    if (!existsSync(file)) return [];
+    const parsed = JSON.parse(readFileSync(file, "utf-8"));
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((m) => m?.type === "chat" && typeof m?.nickname === "string" && typeof m?.text === "string")
+      .slice(-100);
+  } catch {
+    return [];
+  }
+}
+
+function saveRoomHistory(room: RoomState): void {
+  try {
+    mkdirSync(getDataDir(), { recursive: true });
+    const chats = room.history.filter((m) => m.type === "chat").slice(-100);
+    writeFileSync(roomFilePath(room.name), JSON.stringify(chats, null, 2));
+  } catch {
+    // persistence is best-effort; chat still works in memory
+  }
+}
+
 export function getOrCreateRoom(name: string = DEFAULT_ROOM): RoomState {
   let room = rooms.get(name);
   if (!room) {
-    room = { name, history: [], clients: new Set() };
+    room = { name, history: loadPersistedChat(name), clients: new Set() };
     rooms.set(name, room);
   }
   return room;
@@ -56,16 +91,29 @@ export function getHistory(roomName: string = DEFAULT_ROOM): ChatMessage[] {
 
 export function clearHistoryForTest(roomName?: string): void {
   if (roomName === undefined) {
-    for (const room of rooms.values()) room.history.length = 0;
+    for (const room of rooms.values()) {
+      room.history.length = 0;
+      try {
+        rmSync(roomFilePath(room.name), { force: true });
+      } catch {
+        // ignore
+      }
+    }
     return;
   }
   getOrCreateRoom(roomName).history.length = 0;
+  try {
+    rmSync(roomFilePath(roomName), { force: true });
+  } catch {
+    // ignore
+  }
 }
 
 function broadcast(msg: ChatMessage, roomName: string = DEFAULT_ROOM): void {
   const room = getOrCreateRoom(roomName);
   room.history.push(msg);
   if (room.history.length > 100) room.history.splice(0, room.history.length - 100);
+  if (msg.type === "chat") saveRoomHistory(room);
   const payload = JSON.stringify(msg);
   for (const ws of room.clients) {
     if (ws.readyState === ws.OPEN) ws.send(payload);
